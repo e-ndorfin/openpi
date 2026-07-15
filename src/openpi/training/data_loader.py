@@ -7,11 +7,11 @@ from typing import Literal, Protocol, SupportsIndex, TypeVar
 
 import jax
 import jax.numpy as jnp
-import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
 import torch
 
 import openpi.models.model as _model
+import openpi.shared.lerobot_compat as lerobot_dataset
 import openpi.training.config as _config
 from openpi.training.droid_rlds_dataset import DroidRldsDataset
 import openpi.transforms as _transforms
@@ -137,16 +137,29 @@ def create_torch_dataset(
     if repo_id == "fake":
         return FakeDataset(model_config, num_samples=1024)
 
-    dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
+    dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id, root=data_config.local_files_path)
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
+        root=data_config.local_files_path,
+        episodes=list(data_config.episodes) if data_config.episodes is not None else None,
         delta_timestamps={
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },
+        # Float/video timestamp rounding can exceed LeRobot's 1e-4 default near
+        # file boundaries. This remains far below one 30 FPS frame (0.033 s).
+        tolerance_s=1e-3,
+        # TorchCodec detects as importable on this cluster but cannot load because
+        # the required system FFmpeg shared libraries are absent. PyAV's wheel
+        # bundles its FFmpeg runtime and works without system packages.
+        video_backend="pyav",
     )
 
     if data_config.prompt_from_task:
-        dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
+        tasks = dataset_meta.tasks
+        # v2.1 exposes {task_index: task}; v3.0 exposes a DataFrame indexed by task.
+        if hasattr(tasks, "columns") and "task_index" in tasks.columns:
+            tasks = {int(task_index): task for task, task_index in tasks["task_index"].items()}
+        dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(tasks)])
 
     return dataset
 

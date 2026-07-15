@@ -3,6 +3,8 @@ assets/
 checkpoints/
 data/
 wandb/
+slurm-*.out
+slurm-*.err
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

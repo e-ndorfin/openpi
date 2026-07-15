@@ -17,7 +17,7 @@ dependencies = [
     "imageio>=2.36.1",
     "jax[cuda12]==0.5.3",
     "jaxtyping==0.2.36",
-    "lerobot",
+    "lerobot==0.4.4",
     "ml_collections==1.0.0",
     "numpy>=1.22.4,<2.0.0",
     "numpydantic>=1.6.6",
@@ -63,11 +63,18 @@ rlds = [
 ]
 
 [tool.uv]
-override-dependencies = ["ml-dtypes==0.4.1", "tensorstore==0.1.74"]
+# LeRobot 0.4.4 reads v3.0 datasets. av 15.1.0 has a portable wheel, while
+# rerun-sdk is only used by LeRobot's visualization tools and has no wheel for
+# this cluster's glibc version. OpenPI's training path does not import rerun.
+override-dependencies = [
+    "ml-dtypes==0.4.1",
+    "tensorstore==0.1.74",
+    "av==15.1.0",
+    "rerun-sdk ; sys_platform == 'never'",
+]
 
 [tool.uv.sources]
 openpi-client = { workspace = true }
-lerobot = { git = "https://github.com/huggingface/lerobot", rev = "0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" }
 dlimp = { git = "https://github.com/kvablack/dlimp", rev = "ad72ce3a9b414db2185bc0b38461d4101a65477a" }
 
 [tool.uv.workspace]

@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import dataclasses
 import difflib
 import logging
+import os
 import pathlib
 from typing import Any, Literal, Protocol, TypeAlias
 
@@ -20,6 +21,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.yam_policy as yam_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -89,6 +91,13 @@ class DataConfig:
 
     # If true, will use the LeRobot dataset task to define the prompt.
     prompt_from_task: bool = False
+
+    # Optional local LeRobot dataset root. When unset, LeRobot uses its standard
+    # Hugging Face cache location derived from repo_id.
+    local_files_path: str | None = None
+
+    # Optional episode indices to load from a LeRobot dataset.
+    episodes: Sequence[int] | None = None
 
     # Only used for RLDS data loader (ie currently only used for DROID).
     rlds_data_dir: str | None = None
@@ -274,6 +283,53 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
             repack_transforms=self.repack_transforms,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotWireInsertionDataConfig(DataConfigFactory):
+    """Transforms the local bimanual YAM wire-insertion dataset for OpenPI."""
+
+    use_delta_joint_actions: bool = True
+    adapt_to_pi: bool = True
+    default_prompt: str | None = "Insert the USB-C plug into the USB-C port."
+    action_sequence_keys: Sequence[str] = ("action",)
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transforms = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "images": {
+                            "cam_high": "observation.images.agentview",
+                            "cam_left_wrist": "observation.images.wrist_left",
+                            "cam_right_wrist": "observation.images.wrist_right",
+                        },
+                        "state": "observation.state",
+                        "actions": "action",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+        data_transforms = _transforms.Group(
+            inputs=[yam_policy.YamInputs(adapt_to_pi=self.adapt_to_pi)],
+            outputs=[yam_policy.YamOutputs(adapt_to_pi=self.adapt_to_pi)],
+        )
+        if self.use_delta_joint_actions:
+            delta_action_mask = _transforms.make_bool_mask(6, -1, 6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transforms,
+            data_transforms=data_transforms,
+            model_transforms=ModelTransformFactory(default_prompt=self.default_prompt)(model_config),
             action_sequence_keys=self.action_sequence_keys,
         )
 
@@ -556,6 +612,19 @@ class TrainConfig:
             raise ValueError("Cannot resume and overwrite at the same time.")
 
 
+_WIRE_INSERTION_DATA_ROOT = os.environ.get(
+    "WIRE_INSERTION_DATA_ROOT",
+    str(pathlib.Path(__file__).resolve().parents[4] / "lerobot_data" / "wire_insertion"),
+)
+_WIRE_INSERTION_SUCCESS_EPISODES = (
+    *range(13, 15),
+    *range(16, 19),
+    *range(23, 31),
+    *range(32, 41),
+    *range(42, 82),
+)
+
+
 # Use `get_config` if you need to get a config by name in your code.
 _CONFIGS = [
     #
@@ -824,6 +893,40 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps=20_000,
         batch_size=64,
+    ),
+    #
+    # Fine-tuning on the local bimanual YAM wire-insertion dataset.
+    #
+    TrainConfig(
+        name="pi05_wire_insertion",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LeRobotWireInsertionDataConfig(
+            repo_id="wire_insertion",
+            base_config=DataConfig(
+                prompt_from_task=True,
+                local_files_path=_WIRE_INSERTION_DATA_ROOT,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=20_000,
+        batch_size=32,
+        wandb_enabled=True,
+    ),
+    TrainConfig(
+        name="pi05_wire_insertion_success",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LeRobotWireInsertionDataConfig(
+            repo_id="wire_insertion",
+            base_config=DataConfig(
+                prompt_from_task=True,
+                local_files_path=_WIRE_INSERTION_DATA_ROOT,
+                episodes=_WIRE_INSERTION_SUCCESS_EPISODES,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=100_000,
+        batch_size=128,
+        wandb_enabled=True,
     ),
     #
     # Fine-tuning DROID configs.
