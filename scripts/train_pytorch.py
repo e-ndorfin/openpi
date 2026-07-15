@@ -79,14 +79,18 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, enabled: bool = T
     if not ckpt_dir.exists():
         raise FileNotFoundError(f"Checkpoint directory {ckpt_dir} does not exist.")
 
+    # Checkpoints stay on local storage. This is a defense-in-depth safeguard against
+    # checkpoint files being picked up by W&B's automatic run-file syncing.
+    settings = wandb.Settings(ignore_globs=("*.safetensors", "*.pt", "*.pth", "*.ckpt", "params/**"))
     if resuming:
         run_id = (ckpt_dir / "wandb_id.txt").read_text().strip()
-        wandb.init(id=run_id, resume="must", project=config.project_name)
+        wandb.init(id=run_id, resume="must", project=config.project_name, settings=settings)
     else:
         wandb.init(
             name=config.exp_name,
             config=dataclasses.asdict(config),
             project=config.project_name,
+            settings=settings,
         )
         (ckpt_dir / "wandb_id.txt").write_text(wandb.run.id)
 
