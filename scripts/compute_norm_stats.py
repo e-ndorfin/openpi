@@ -21,6 +21,11 @@ class RemoveStrings(transforms.DataTransformFn):
         return {k: v for k, v in x.items() if not np.issubdtype(np.asarray(v).dtype, np.str_)}
 
 
+class SelectNormKeys(transforms.DataTransformFn):
+    def __call__(self, x: dict) -> dict:
+        return {key: x[key] for key in ("state", "actions")}
+
+
 def create_torch_dataloader(
     data_config: _config.DataConfig,
     action_horizon: int,
@@ -31,14 +36,19 @@ def create_torch_dataloader(
 ) -> tuple[_data_loader.Dataset, int]:
     if data_config.repo_id is None:
         raise ValueError("Data config must have a repo_id")
-    dataset = _data_loader.create_torch_dataset(data_config, action_horizon, model_config)
+    dataset = _data_loader.create_torch_dataset(
+        data_config,
+        action_horizon,
+        model_config,
+        skip_video_decoding=True,
+    )
     dataset = _data_loader.TransformedDataset(
         dataset,
         [
             *data_config.repack_transforms.inputs,
             *data_config.data_transforms.inputs,
-            # Remove strings since they are not supported by JAX and are not needed to compute norm stats.
-            RemoveStrings(),
+            # Drop images and metadata before collation and JAX device transfer.
+            SelectNormKeys(),
         ],
     )
     if max_frames is not None and max_frames < len(dataset):
