@@ -45,6 +45,8 @@ def _position_state(state: np.ndarray) -> np.ndarray:
 
 def _decode_state(state: np.ndarray, *, adapt_to_pi: bool) -> np.ndarray:
     state = _position_state(np.asarray(state)).copy()
+    if not np.issubdtype(state.dtype, np.number) or not np.all(np.isfinite(state)):
+        raise ValueError("YAM state must contain only finite numeric values")
     if adapt_to_pi:
         state *= _JOINT_FLIP_MASK
         state[..., [6, 13]] = _gripper_to_angular(state[..., [6, 13]])
@@ -53,12 +55,20 @@ def _decode_state(state: np.ndarray, *, adapt_to_pi: bool) -> np.ndarray:
 
 def _convert_image(image) -> np.ndarray:
     image = np.asarray(image)
+    if not np.issubdtype(image.dtype, np.number) or not np.all(np.isfinite(image)):
+        raise ValueError("YAM images must contain only finite numeric values")
     if np.issubdtype(image.dtype, np.floating):
-        image = (255 * image).astype(np.uint8)
+        if np.any(image < 0) or np.any(image > 1):
+            raise ValueError("Floating-point YAM images must have values in [0, 1]")
+        image = np.rint(255 * image).astype(np.uint8)
     if image.ndim != 3:
         raise ValueError(f"Expected a 3D image, got {image.shape}")
     if image.shape[0] == 3:
         image = einops.rearrange(image, "c h w -> h w c")
+    if image.shape[-1] != 3:
+        raise ValueError(f"Expected an RGB image with 3 channels, got {image.shape}")
+    if image.dtype != np.uint8:
+        raise ValueError(f"Expected uint8 or float YAM image, got {image.dtype}")
     return image
 
 
@@ -70,10 +80,17 @@ class YamInputs(transforms.DataTransformFn):
     EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = ("cam_high", "cam_left_wrist", "cam_right_wrist")
 
     def __call__(self, data: dict) -> dict:
+        if "images" not in data:
+            raise ValueError("Missing required YAM input 'images'")
+        if "state" not in data:
+            raise ValueError("Missing required YAM input 'state'")
         images = data["images"]
         unknown_cameras = set(images) - set(self.EXPECTED_CAMERAS)
         if unknown_cameras:
             raise ValueError(f"Unexpected YAM cameras: {sorted(unknown_cameras)}")
+        missing_cameras = set(self.EXPECTED_CAMERAS) - set(images)
+        if missing_cameras:
+            raise ValueError(f"Missing required YAM cameras: {sorted(missing_cameras)}")
 
         decoded_images = {key: _convert_image(value) for key, value in images.items()}
         base_image = decoded_images["cam_high"]
@@ -99,6 +116,8 @@ class YamInputs(transforms.DataTransformFn):
             actions = np.asarray(data["actions"]).copy()
             if actions.shape[-1] != 14:
                 raise ValueError(f"Expected 14D YAM actions, got {actions.shape}")
+            if not np.issubdtype(actions.dtype, np.number) or not np.all(np.isfinite(actions)):
+                raise ValueError("YAM actions must contain only finite numeric values")
             if self.adapt_to_pi:
                 actions *= _JOINT_FLIP_MASK
                 actions[..., [6, 13]] = _gripper_from_angular_inv(actions[..., [6, 13]])
@@ -115,7 +134,12 @@ class YamOutputs(transforms.DataTransformFn):
     adapt_to_pi: bool = True
 
     def __call__(self, data: dict) -> dict:
-        actions = np.asarray(data["actions"])[..., :14].copy()
+        actions = np.asarray(data["actions"])
+        if actions.ndim < 1 or actions.shape[-1] < 14:
+            raise ValueError(f"Expected model actions with at least 14 dimensions, got {actions.shape}")
+        if not np.issubdtype(actions.dtype, np.number) or not np.all(np.isfinite(actions)):
+            raise ValueError("Model actions must contain only finite numeric values")
+        actions = actions[..., :14].copy()
         if self.adapt_to_pi:
             actions *= _JOINT_FLIP_MASK
             actions[..., [6, 13]] = _gripper_from_angular(actions[..., [6, 13]])

@@ -624,6 +624,21 @@ _WIRE_INSERTION_SUCCESS_EPISODES = (
     *range(42, 82),
 )
 
+_WIRE_INSERTION_POLICY_METADATA = {
+    "contract": "yam_bimanual_v1",
+    "robot_type": "yam_bimanual",
+    "action_dim": 14,
+    "model_action_horizon": 50,
+    "default_execution_horizon": 16,
+    "control_hz": 30,
+    "image_size": 224,
+    "image_keys": {
+        "agentview": "observation/images/agentview",
+        "wrist_left": "observation/images/wrist_left",
+        "wrist_right": "observation/images/wrist_right",
+    },
+}
+
 
 # Use `get_config` if you need to get a config by name in your code.
 _CONFIGS = [
@@ -911,6 +926,7 @@ _CONFIGS = [
         num_train_steps=20_000,
         batch_size=32,
         wandb_enabled=True,
+        policy_metadata=_WIRE_INSERTION_POLICY_METADATA,
     ),
     TrainConfig(
         name="pi05_wire_insertion_success",
@@ -927,6 +943,7 @@ _CONFIGS = [
         num_train_steps=100_000,
         batch_size=128,
         wandb_enabled=True,
+        policy_metadata=_WIRE_INSERTION_POLICY_METADATA,
     ),
     #
     # Fine-tuning DROID configs.
