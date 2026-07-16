@@ -127,8 +127,56 @@ class FakeDataset(Dataset):
         return self._num_samples
 
 
+class LeRobotNoVideoDataset(Dataset):
+    """Read LeRobot samples without decoding videos.
+
+    This mirrors the non-video portion of LeRobot 0.4.4's ``__getitem__`` so
+    normalization can retain its index and episode-boundary semantics. Tiny
+    camera placeholders keep the existing repack and robot transforms usable;
+    callers should discard them before batching.
+    """
+
+    def __init__(self, dataset: Dataset):
+        self._dataset = dataset
+        self._video_keys = tuple(dataset.meta.video_keys)
+
+    def __getitem__(self, index: SupportsIndex) -> dict:
+        dataset = self._dataset
+        dataset._ensure_hf_dataset_loaded()  # noqa: SLF001
+        item = dataset.hf_dataset[index]
+        episode_index = item["episode_index"].item()
+        absolute_index = item["index"].item()
+
+        if dataset.delta_indices is not None:
+            query_indices, padding = dataset._get_query_indices(absolute_index, episode_index)  # noqa: SLF001
+            query_result = dataset._query_hf_dataset(query_indices)  # noqa: SLF001
+            item = {**item, **padding}
+            for key, value in query_result.items():
+                item[key] = value
+
+        dummy_image = torch.zeros((3, 1, 1), dtype=torch.float32)
+        for key in self._video_keys:
+            item[key] = dummy_image
+
+        task_index = item["task_index"].item()
+        item["task"] = dataset.meta.tasks.iloc[task_index].name
+
+        if "subtask_index" in dataset.features and dataset.meta.subtasks is not None:
+            subtask_index = item["subtask_index"].item()
+            item["subtask"] = dataset.meta.subtasks.iloc[subtask_index].name
+
+        return item
+
+    def __len__(self) -> int:
+        return len(self._dataset)
+
+
 def create_torch_dataset(
-    data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
+    data_config: _config.DataConfig,
+    action_horizon: int,
+    model_config: _model.BaseModelConfig,
+    *,
+    skip_video_decoding: bool = False,
 ) -> Dataset:
     """Create a dataset for training."""
     repo_id = data_config.repo_id
@@ -153,6 +201,9 @@ def create_torch_dataset(
         # bundles its FFmpeg runtime and works without system packages.
         video_backend="pyav",
     )
+
+    if skip_video_decoding:
+        dataset = LeRobotNoVideoDataset(dataset)
 
     if data_config.prompt_from_task:
         tasks = dataset_meta.tasks
