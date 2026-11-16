@@ -145,6 +145,24 @@ def create_torch_dataset(
         },
     )
 
+    if data_config.episodes is not None:
+        if not data_config.episodes or len(set(data_config.episodes)) != len(data_config.episodes):
+            raise ValueError("Episodes must be nonempty and unique.")
+        invalid_episodes = set(data_config.episodes) - set(dataset_meta.episodes)
+        if invalid_episodes:
+            raise ValueError(f"Episodes not found in dataset: {sorted(invalid_episodes)}")
+        # The pinned LeRobot reader indexes action boundaries by original episode ID.
+        # Selecting frames here preserves those boundaries for noncontiguous episodes.
+        indices = [
+            frame
+            for episode in data_config.episodes
+            for frame in range(
+                int(dataset.episode_data_index["from"][episode]),
+                int(dataset.episode_data_index["to"][episode]),
+            )
+        ]
+        dataset = torch.utils.data.Subset(dataset, indices)
+
     if data_config.prompt_from_task:
         dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
 

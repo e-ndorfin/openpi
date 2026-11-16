@@ -6,6 +6,7 @@ import dataclasses
 import difflib
 import logging
 import pathlib
+import random
 from typing import Any, Literal, Protocol, TypeAlias
 
 import etils.epath as epath
@@ -65,6 +66,8 @@ class AssetsConfig:
 class DataConfig:
     # LeRobot repo id. If None, fake data will be created.
     repo_id: str | None = None
+    # Whole LeRobot episodes to train on. None selects all episodes.
+    episodes: tuple[int, ...] | None = None
     # Directory within the assets directory containing the data assets.
     asset_id: str | None = None
     # Contains precomputed normalization stats. If None, normalization will not be performed.
@@ -825,6 +828,41 @@ _CONFIGS = [
         num_train_steps=20_000,
         batch_size=64,
     ),
+    *[
+        TrainConfig(
+            name=f"pi05_fold_cloth_real_{episode_count}",
+            model=pi0_config.Pi0Config(pi05=True),
+            data=LeRobotAlohaDataConfig(
+                repo_id="fold_cloth_real",
+                base_config=DataConfig(episodes=episodes),
+                default_prompt="Fold the tablecloth in half.",
+                repack_transforms=_transforms.Group(
+                    inputs=[
+                        _transforms.RepackTransform(
+                            {
+                                "images": {
+                                    "cam_high": "observation.images.cam_high",
+                                    "cam_left_wrist": "observation.images.cam_wrist_left",
+                                    "cam_right_wrist": "observation.images.cam_wrist_right",
+                                },
+                                "state": "observation.state",
+                                "actions": "action",
+                            }
+                        )
+                    ]
+                ),
+            ),
+            weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+            num_train_steps=20_000,
+            batch_size=64,
+            seed=42,
+            fsdp_devices=2,
+        )
+        for episode_count, episodes in (
+            (150, tuple(range(150))),
+            (75, tuple(sorted(random.Random(42).sample(range(150), 75)))),
+        )
+    ],
     #
     # Fine-tuning DROID configs.
     #
