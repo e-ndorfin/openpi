@@ -831,11 +831,32 @@ _CONFIGS = [
     *[
         TrainConfig(
             name=f"pi05_fold_cloth_real_{episode_count}",
-            model=pi0_config.Pi0Config(pi05=True),
+            project_name="openpi",
+            exp_name=tyro.MISSING,  # Set --exp-name for each run.
+            model=pi0_config.Pi0Config(
+                pi05=True,
+                dtype="bfloat16",
+                paligemma_variant="gemma_2b",
+                action_expert_variant="gemma_300m",
+                action_dim=32,  # Robot actions are padded from 14 to the pretrained model's width.
+                action_horizon=50,
+                max_token_len=200,  # Resolved default for pi0.5.
+                discrete_state_input=True,  # Resolved default for pi0.5.
+                pytorch_compile_mode="max-autotune",  # Only used by PyTorch training.
+            ),
             data=LeRobotAlohaDataConfig(
                 repo_id="fold_cloth_real",
-                base_config=DataConfig(episodes=episodes),
+                assets=AssetsConfig(
+                    assets_dir=None,  # Use this config's assets directory.
+                    asset_id=None,  # Use the dataset repo ID.
+                ),
+                # Normalization and transforms are derived by LeRobotAlohaDataConfig.create().
+                # RLDS-only fields do not apply to this LeRobot dataset.
+                base_config=DataConfig(episodes=episodes, prompt_from_task=False),
+                use_delta_joint_actions=True,
+                adapt_to_pi=True,
                 default_prompt="Fold the tablecloth in half.",
+                action_sequence_keys=("action",),
                 repack_transforms=_transforms.Group(
                     inputs=[
                         _transforms.RepackTransform(
@@ -853,9 +874,38 @@ _CONFIGS = [
                 ),
             ),
             weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+            pytorch_weight_path=None,
+            pytorch_training_precision="bfloat16",
+            lr_schedule=_optimizer.CosineDecaySchedule(
+                warmup_steps=1_000,
+                peak_lr=2.5e-5,
+                decay_steps=30_000,  # Upstream default, independent of num_train_steps.
+                decay_lr=2.5e-6,
+            ),
+            optimizer=_optimizer.AdamW(
+                b1=0.9,
+                b2=0.95,
+                eps=1e-8,
+                weight_decay=1e-10,
+                clip_gradient_norm=1.0,
+            ),
+            ema_decay=0.99,
+            # Nothing frozen: vision encoder, language model, and action expert all train.
+            # A separate vision learning rate requires optimizer support, not a filter.
+            freeze_filter=nnx.Nothing(),
+            assets_base_dir="./assets",
+            checkpoint_base_dir="./checkpoints",
             num_train_steps=20_000,
             batch_size=64,
+            num_workers=2,
             seed=42,
+            log_interval=100,
+            save_interval=1_000,
+            keep_period=5_000,
+            overwrite=False,
+            resume=False,
+            wandb_enabled=True,
+            policy_metadata=None,
             fsdp_devices=2,
         )
         for episode_count, episodes in (
